@@ -1,0 +1,67 @@
+---
+- name: Установка Docker на Ubuntu
+  import_tasks: install_docker.yml
+  become: true
+
+- name: Создание директории проекта
+  file:
+    path: "{{ project_dir }}"
+    state: directory
+    owner: "{{ system_user }}"
+    group: "{{ system_user }}"
+  become: true
+
+- name: Создание Docker сети
+  community.docker.docker_network:
+    name: wordpress_network
+  become: true
+
+- name: Деплой контейнера MySQL
+  community.docker.docker_container:
+    name: mysql_container
+    image: mysql:8.0
+    env:
+      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
+      MYSQL_DATABASE: "{{ wp_db_name }}"
+      MYSQL_USER: "{{ wp_db_user }}"
+      MYSQL_PASSWORD: "{{ wp_db_password }}"
+    networks:
+      - name: wordpress_network
+    volumes:
+      - mysql_data:/var/lib/mysql
+    state: started
+  become: true
+
+- name: Деплой контейнера WordPress
+  community.docker.docker_container:
+    name: wordpress_container
+    image: "wordpress:{{ wp_version }}"
+    env:
+      WORDPRESS_DB_HOST: "mysql_container"
+      WORDPRESS_DB_USER: "{{ wp_db_user }}"
+      WORDPRESS_DB_PASSWORD: "{{ wp_db_password }}"
+      WORDPRESS_DB_NAME: "{{ wp_db_name }}"
+    ports:
+      - "{{ wp_port }}:80"
+    networks:
+      - name: wordpress_network
+    state: started
+  become: true
+
+- name: Создание тома для данных MySQL
+  community.docker.docker_volume:
+    name: mysql_data
+  become: true
+
+
+- name: Создание Docker Compose файла
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ project_dir }}/docker-compose.yml"
+    owner: "{{ system_user }}"
+    group: "{{ system_user }}"
+  become: true
+
+- name: Запуск контейнеров через Docker Compose
+  shell: cd {{ project_dir }} && docker-compose up -d
+  become: true
