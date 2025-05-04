@@ -1,6 +1,0 @@
----
-- name: Install WordPress with Docker
-  hosts: all
-  become: true
-  roles:
-    - wordpress-docker

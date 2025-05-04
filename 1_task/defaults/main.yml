@@ -1,8 +1,9 @@
 ---
-system_user: sysop
+system_user: dimass
 
 project_dir: /home/{{ system_user }}/wordpress-docker
 
+is_wordpress: true
 wp_version: latest
 wp_db_user: wordpress_user
 wp_db_password: change_me_please
