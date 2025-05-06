@@ -17,6 +17,8 @@ services:
     image: wordpress:{{ wp_version }}
     ports:
       - "{{ wp_port }}:80"
+    volumes:
+      - wp_data:/var/www/html
     environment:
       WORDPRESS_DB_HOST: mysql
       WORDPRESS_DB_USER: {{ wp_db_user }}
@@ -32,3 +34,4 @@ networks:
 
 volumes:
   mysql_data:
+  wp_data:
