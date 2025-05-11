@@ -1,7 +1,5 @@
 ---
-system_user: dimass
-
-project_dir: /home/{{ system_user }}/wordpress-docker
+project_dir: /home/{{ ansible_user }}/wordpress-docker
 
 is_wordpress: true
 wp_version: latest

@@ -1,8 +1,6 @@
 ---
 - name: Home work 2
   hosts: carrier
-#  vars_files:
-#    - 2_task/defaults/main.yml
   become: true
   roles:
     - 2_task
@@ -16,6 +14,3 @@
           - "db_master: {{ db_master }}"
           - "db_replica: {{ db_replica }}"
           - "db_pass: {{ db_pass }}"
-
-#    - name: Include MySQL Cluster Tasks
-#      ansible.builtin.include_tasks: 2_task/tasks/main.yml

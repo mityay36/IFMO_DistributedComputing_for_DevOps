@@ -1,7 +1,5 @@
 ---
-system_user: dimass
-
-project_dir: /home/{{ system_user }}/wordpress-cluster
+project_dir: /home/{{ ansible_user }}/wordpress-cluster
 
 is_wordpress: true
 wp_version: latest

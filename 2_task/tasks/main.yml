@@ -4,16 +4,12 @@
     path: "{{ project_dir }}"
     mode: '0750'
     state: directory
-    owner: "{{ system_user }}"
-    group: "{{ system_user }}"
 
 - name: Создание директорий для конфигурации MySQL
   ansible.builtin.file:
     path: "{{ project_dir }}/mysql_conf/{{ item }}"
     mode: '0755'
     state: directory
-    owner: "root"
-    group: "{{ system_user }}"
   loop:
     - master
     - replica
@@ -22,44 +18,42 @@
   ansible.builtin.template:
     src: mysql_master.cnf.j2
     dest: "{{ project_dir }}/mysql_conf/master/custom.cnf"
-    owner: "root"
-    group: "{{ system_user }}"
     mode: '0755'
 
 - name: Создание конфигурации для replica
   ansible.builtin.template:
     src: mysql_replica.cnf.j2
     dest: "{{ project_dir }}/mysql_conf/replica/custom.cnf"
-    owner: "root"
-    group: "{{ system_user }}"
     mode: '0755'
 
 - name: Создание Docker Compose файла
   ansible.builtin.template:
     src: docker-compose-cluster.yml.j2
     dest: "{{ project_dir }}/docker-compose.yml"
-    owner: "{{ system_user }}"
-    group: "{{ system_user }}"
     mode: '0644'
 
 - name: Создание скрипта настройки репликации
   ansible.builtin.template:
     src: setup_replication.sh.j2
     dest: "{{ project_dir }}/setup_replication.sh"
-    owner: "{{ system_user }}"
-    group: "{{ system_user }}"
     mode: '0755'
 
+- name: Остановка существующего контейнера
+  ansible.builtin.import_tasks: cleanup_containers.yml
+
 - name: Запуск контейнеров через Docker Compose
-  ansible.builtin.shell: cd {{ project_dir }} && docker-compose up -d
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
   register: compose_result
-  changed_when: compose_result.stdout is search('(Creating|Starting|Recreating)')
 
 - name: Пауза для инициализации базы данных
   ansible.builtin.pause:
-    seconds: 90
+    seconds: 30
 
 - name: Настройка репликации MySQL
-  ansible.builtin.shell: cd {{ project_dir }} && ./setup_replication.sh
+  ansible.builtin.command: ./setup_replication.sh
+  args:
+    chdir: "{{ project_dir }}"
   register: replication_result
   changed_when: replication_result.rc == 0

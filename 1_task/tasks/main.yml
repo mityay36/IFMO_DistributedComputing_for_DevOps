@@ -15,6 +15,7 @@
     mode: '0644'
 
 - name: Запуск контейнеров через Docker Compose
-  ansible.builtin.shell: cd {{ project_dir }} && docker-compose up -d
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
   register: compose_result
-  changed_when: compose_result.stdout is search('(Creating|Starting|Recreating)')
