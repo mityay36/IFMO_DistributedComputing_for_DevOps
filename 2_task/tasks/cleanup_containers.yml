@@ -1,17 +1,17 @@
 ---
 - name: Проверка и очистка существующих контейнеров
   block:
-#    - name: Остановка существующих контейнеров проекта WordPress Docker
-#      community.docker.docker_compose_v2:
-#        project_src: "/home/{{ ansible_user }}/wordpress-docker"
-#        state: absent
-#      failed_when: false
-#
-#    - name: Остановка существующих контейнеров проекта WordPress Docker
-#      community.docker.docker_compose_v2:
-#        project_src: "/home/{{ ansible_user }}/wordpress-cluster"
-#        state: absent
-#      failed_when: false
+    - name: Остановка существующих контейнеров проекта WordPress Docker
+      community.docker.docker_compose_v2:
+        project_src: "/home/{{ ansible_user }}/wordpress-docker"
+        state: absent
+      failed_when: false
+
+    - name: Остановка существующих контейнеров проекта WordPress Docker
+      community.docker.docker_compose_v2:
+        project_src: "/home/{{ ansible_user }}/wordpress-cluster"
+        state: absent
+      failed_when: false
 
     - name: Проверка использования порта WordPress
       ansible.builtin.wait_for:
@@ -48,8 +48,3 @@
         not port_check.failed and
         item.Ports is defined and
         (item.Ports | json_query('[?PublicPort==`' + wp_port | string + '`]') | length > 0)
-
-    - name: Пауза для освобождения ресурсов
-      ansible.builtin.pause:
-        seconds: 5
-      when: not port_check.failed
