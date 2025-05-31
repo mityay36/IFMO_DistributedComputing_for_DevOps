@@ -1,0 +1,57 @@
+---
+- name: Создание директории мониторинга
+  ansible.builtin.file:
+    path: "{{ monitoring_dir }}"
+    mode: '0750'
+    state: directory
+
+- name: Создание директории для конфигурации Prometheus
+  ansible.builtin.file:
+    path: "{{ monitoring_dir }}/prometheus"
+    mode: '0750'
+    state: directory
+
+- name: Создание директории для данных Grafana
+  ansible.builtin.file:
+    path: "{{ monitoring_dir }}/grafana"
+    mode: '0750'
+    state: directory
+
+- name: Создание конфигурационного файла Prometheus
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ monitoring_dir }}/prometheus/prometheus.yml"
+    mode: '0644'
+  notify: restart prometheus
+
+- name: Остановка существующих контейнеров мониторинга
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    state: absent
+  failed_when: false
+
+- name: Создание Docker Compose файла для мониторинга
+  ansible.builtin.template:
+    src: docker-compose-monitoring.yml.j2
+    dest: "{{ monitoring_dir }}/docker-compose.yml"
+    mode: '0644'
+
+- name: Запуск стека мониторинга
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    state: present
+  register: monitoring_result
+
+- name: Ожидание готовности Grafana
+  ansible.builtin.wait_for:
+    port: "{{ grafana_port }}"
+    host: "{{ ansible_default_ipv4.address }}"
+    delay: 10
+    timeout: 60
+
+- name: Ожидание готовности Prometheus
+  ansible.builtin.wait_for:
+    port: "{{ prometheus_port }}"
+    host: "{{ ansible_default_ipv4.address }}"
+    delay: 5
+    timeout: 30
