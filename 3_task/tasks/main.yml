@@ -95,30 +95,32 @@
 
 - name: Создание пользователя MySQL для экспорта метрик на master
   ansible.builtin.command: >
-    docker exec mysql-master mysql -uroot -p{{ db_pass }} -e 
+    docker exec mysql-master mysql -uroot -p{{ db_pass }} -e
     "CREATE USER IF NOT EXISTS '{{ mysql_exporter_user }}'@'%' IDENTIFIED BY '{{ mysql_exporter_password }}';
     GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO '{{ mysql_exporter_user }}'@'%';
     FLUSH PRIVILEGES;"
   when: mysql_containers_status.results[0].exists and mysql_containers_status.results[0].container.State.Status == "running"
-  ignore_errors: true
+  failed_when: false
   changed_when: true
 
 - name: Создание пользователя MySQL для экспорта метрик на replica
   ansible.builtin.command: >
-    docker exec mysql-replica mysql -uroot -p{{ db_pass }} -e 
+    docker exec mysql-replica mysql -uroot -p{{ db_pass }} -e
     "CREATE USER IF NOT EXISTS '{{ mysql_exporter_user }}'@'%' IDENTIFIED BY '{{ mysql_exporter_password }}';
     GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO '{{ mysql_exporter_user }}'@'%';
     FLUSH PRIVILEGES;"
   when: mysql_containers_status.results[1].exists and mysql_containers_status.results[1].container.State.Status == "running"
-  ignore_errors: true
+  failed_when: false
   changed_when: true
 
 - name: Вывод информации о MySQL контейнерах
   ansible.builtin.debug:
     msg: |
-      MySQL Master: {{ 'Running' if mysql_containers_status.results[0].exists and mysql_containers_status.results[0].container.State.Status == "running" else 'Not running' }}
-       MySQL Replica: {{ 'Running' if mysql_containers_status.results[1].exists and mysql_containers_status.results[1].container.State.Status == "running" else 'Not running' }}
-       Note: If MySQL containers are not running, start them first with playbook1.yml or playbook2.yml
+      MySQL Master: {{ 'Running' if mysql_containers_status.results[0].exists
+      and mysql_containers_status.results[0].container.State.Status == "running" else 'Not running' }}
+      MySQL Replica: {{ 'Running' if mysql_containers_status.results[1].exists
+      and mysql_containers_status.results[1].container.State.Status == "running" else 'Not running' }}
+      Note: If MySQL containers are not running, start them first with playbook1.yml or playbook2.yml
 
 - name: Импорт MySQL Exporter Dashboard через API
   community.grafana.grafana_dashboard:
