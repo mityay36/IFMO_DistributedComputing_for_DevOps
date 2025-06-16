@@ -1,21 +1,46 @@
 ---
+- name: Установка PyMySQL для работы с MySQL
+  ansible.builtin.package:
+    name: python3-pymysql
+    state: present
+  become: true
+
 - name: Создание директории мониторинга
   ansible.builtin.file:
     path: "{{ monitoring_dir }}"
     mode: '0750'
     state: directory
 
-- name: Создание директории для конфигурации Prometheus
+- name: Создание директорий для конфигурации
   ansible.builtin.file:
-    path: "{{ monitoring_dir }}/prometheus"
+    path: "{{ monitoring_dir }}/{{ item }}"
     mode: '0750'
     state: directory
+  loop:
+    - prometheus
+    - grafana/provisioning/datasources
+    - grafana/provisioning/dashboards
 
-- name: Создание директории для данных Grafana
-  ansible.builtin.file:
-    path: "{{ monitoring_dir }}/grafana"
-    mode: '0750'
-    state: directory
+- name: Проверка запущенных MySQL контейнеров
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  register: mysql_containers_status
+  loop:
+    - mysql-master
+    - mysql-replica
+  failed_when: false
+
+- name: Получение информации о сетях Docker
+  community.docker.docker_network_info:
+    name: wordpress_network
+  register: network_info
+  failed_when: false
+
+- name: Создание сети wordpress_network если она не существует
+  community.docker.docker_network:
+    name: wordpress_network
+    driver: bridge
+  when: not network_info.exists
 
 - name: Создание конфигурационного файла Prometheus
   ansible.builtin.template:
@@ -23,6 +48,18 @@
     dest: "{{ monitoring_dir }}/prometheus/prometheus.yml"
     mode: '0644'
   notify: restart prometheus
+
+- name: Создание конфигурации источников данных для Grafana
+  ansible.builtin.template:
+    src: grafana-datasources.yml.j2
+    dest: "{{ monitoring_dir }}/grafana/provisioning/datasources/prometheus.yml"
+    mode: '0644'
+
+- name: Создание конфигурации дашбордов для Grafana
+  ansible.builtin.template:
+    src: grafana-dashboards.yml.j2
+    dest: "{{ monitoring_dir }}/grafana/provisioning/dashboards/dashboards.yml"
+    mode: '0644'
 
 - name: Остановка существующих контейнеров мониторинга
   community.docker.docker_compose_v2:
@@ -55,3 +92,41 @@
     host: "{{ ansible_default_ipv4.address }}"
     delay: 5
     timeout: 30
+
+- name: Создание пользователя MySQL для экспорта метрик на master
+  ansible.builtin.command: >
+    docker exec mysql-master mysql -uroot -p{{ db_pass }} -e 
+    "CREATE USER IF NOT EXISTS '{{ mysql_exporter_user }}'@'%' IDENTIFIED BY '{{ mysql_exporter_password }}';
+    GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO '{{ mysql_exporter_user }}'@'%';
+    FLUSH PRIVILEGES;"
+  when: mysql_containers_status.results[0].exists and mysql_containers_status.results[0].container.State.Status == "running"
+  ignore_errors: true
+  changed_when: true
+
+- name: Создание пользователя MySQL для экспорта метрик на replica
+  ansible.builtin.command: >
+    docker exec mysql-replica mysql -uroot -p{{ db_pass }} -e 
+    "CREATE USER IF NOT EXISTS '{{ mysql_exporter_user }}'@'%' IDENTIFIED BY '{{ mysql_exporter_password }}';
+    GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO '{{ mysql_exporter_user }}'@'%';
+    FLUSH PRIVILEGES;"
+  when: mysql_containers_status.results[1].exists and mysql_containers_status.results[1].container.State.Status == "running"
+  ignore_errors: true
+  changed_when: true
+
+- name: Вывод информации о MySQL контейнерах
+  ansible.builtin.debug:
+    msg: |
+      MySQL Master: {{ 'Running' if mysql_containers_status.results[0].exists and mysql_containers_status.results[0].container.State.Status == "running" else 'Not running' }}
+       MySQL Replica: {{ 'Running' if mysql_containers_status.results[1].exists and mysql_containers_status.results[1].container.State.Status == "running" else 'Not running' }}
+       Note: If MySQL containers are not running, start them first with playbook1.yml or playbook2.yml
+
+- name: Импорт MySQL Exporter Dashboard через API
+  community.grafana.grafana_dashboard:
+    grafana_url: "http://{{ ansible_default_ipv4.address }}:{{ grafana_port }}"
+    grafana_user: "{{ grafana_admin_user }}"
+    grafana_password: "{{ grafana_admin_password }}"
+    dashboard_id: "14057"
+    state: present
+    overwrite: true
+  retries: 3
+  delay: 10

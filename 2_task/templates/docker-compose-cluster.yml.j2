@@ -4,6 +4,8 @@ services:
   {{ db_master }}:
     image: mysql:8.0
     container_name: {{ db_master }}
+    ports:
+      - "3306:3306"
     volumes:
       - mysql_master_data:/var/lib/mysql
       - ./mysql_conf/master:/etc/mysql/conf.d
@@ -19,6 +21,8 @@ services:
   {{ db_replica }}:
     image: mysql:8.0
     container_name: {{ db_replica }}
+    ports:
+      - "3307:3306"
     volumes:
       - mysql_replica_data:/var/lib/mysql
       - ./mysql_conf/replica:/etc/mysql/conf.d
