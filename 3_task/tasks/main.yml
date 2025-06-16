@@ -94,24 +94,33 @@
     timeout: 30
 
 - name: Создание пользователя MySQL для экспорта метрик на master
-  ansible.builtin.command: >
-    docker exec mysql-master mysql -uroot -p{{ db_pass }} -e
-    "CREATE USER IF NOT EXISTS '{{ mysql_exporter_user }}'@'%' IDENTIFIED BY '{{ mysql_exporter_password }}';
-    GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO '{{ mysql_exporter_user }}'@'%';
-    FLUSH PRIVILEGES;"
+  community.mysql.mysql_user:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ mysql_exporter_user }}"
+    password: "{{ mysql_exporter_password }}"
+    priv: "PROCESS,REPLICATION CLIENT,SELECT:*.*"
+    host: '%'
+    state: present
   when: mysql_containers_status.results[0].exists and mysql_containers_status.results[0].container.State.Status == "running"
   failed_when: false
-  changed_when: true
 
 - name: Создание пользователя MySQL для экспорта метрик на replica
-  ansible.builtin.command: >
-    docker exec mysql-replica mysql -uroot -p{{ db_pass }} -e
-    "CREATE USER IF NOT EXISTS '{{ mysql_exporter_user }}'@'%' IDENTIFIED BY '{{ mysql_exporter_password }}';
-    GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO '{{ mysql_exporter_user }}'@'%';
-    FLUSH PRIVILEGES;"
+  community.mysql.mysql_user:
+    login_host: localhost
+    login_port: 3307
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ mysql_exporter_user }}"
+    password: "{{ mysql_exporter_password }}"
+    priv: "PROCESS,REPLICATION CLIENT,SELECT:*.*"
+    host: '%'
+    state: present
   when: mysql_containers_status.results[1].exists and mysql_containers_status.results[1].container.State.Status == "running"
   failed_when: false
-  changed_when: true
+
 
 - name: Вывод информации о MySQL контейнерах
   ansible.builtin.debug:
