@@ -1,6 +1,5 @@
 ---
-system_user: dimass
-monitoring_dir: /home/{{ system_user }}/monitoring
+monitoring_dir: /home/{{ ansible_user }}/monitoring
 
 db_master: mysql-master
 db_pass: root_password_change_me
