@@ -1,0 +1,32 @@
+---
+project_dir: /home/{{ ansible_user }}/wordpress-galera
+
+is_wordpress: true
+wordpress_port: 9000
+wp_version: latest
+wp_db_user: wordpress_user
+wp_db_password: change_me_please
+wordpress_db_name: wordpress
+
+db_pass: root_password_change_me
+galera_cluster_name: wordpress_galera_cluster
+galera_sst_user: sstuser
+galera_sst_password: sstpass
+
+db1_host: galera-node1
+db2_host: galera-node2
+db3_host: galera-node3
+db4_host: galera-node4
+db5_host: galera-node5
+
+loadbalancer: haproxy-lb
+haproxy_stats_port: 8404
+haproxy_stats_user: admin
+haproxy_stats_password: admin123
+haproxy_external_port: 3320
+
+monitoring_url: "http://{{ ansible_default_ipv4.address }}:3000"
+
+mysql_exporter_base_port: 9110  # Начинаем с 9110 вместо 9104
+
+galera_cluster_address: "gcomm://{{ db1_host }},{{ db2_host }},{{ db3_host }},{{ db4_host }},{{ db5_host }}"

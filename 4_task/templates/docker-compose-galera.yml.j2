@@ -1,0 +1,147 @@
+services:
+  {{ db1_host }}:
+    image: mariadb:10.5
+    container_name: {{ db1_host }}
+    ports:
+      - "3306:3306"
+    volumes:
+      - galera_node1_data:/var/lib/mysql
+      - ./galera_config:/etc/mysql/conf.d
+      - /var/run/mysqld:/var/run/mysqld
+    environment:
+      MYSQL_ROOT_PASSWORD: {{ db_pass }}
+      MYSQL_DATABASE: {{ wordpress_db_name }}
+      MYSQL_USER: {{ wp_db_user }}
+      MYSQL_PASSWORD: {{ wp_db_password }}
+      MARIADB_AUTO_UPGRADE: "1"
+    command: >
+      --wsrep-new-cluster
+      --wsrep-cluster-name={{ galera_cluster_name }}
+      --wsrep-cluster-address=gcomm://
+      --wsrep-node-name={{ db1_host }}
+      --wsrep-node-address={{ db1_host }}
+      --wsrep-sst-method=rsync
+      --wsrep-sst-auth={{ galera_sst_user }}:{{ galera_sst_password }}
+      --binlog-format=ROW
+      --default-storage-engine=InnoDB
+      --innodb-autoinc-lock-mode=2
+      --socket=/var/run/mysqld/mysqld.sock
+      --bind-address=0.0.0.0
+    networks:
+      - galera_network
+    restart: unless-stopped
+
+{% for i in range(2, 6) %}
+  {{ vars['db' + i|string + '_host'] }}:
+    image: mariadb:10.6
+    container_name: {{ vars['db' + i|string + '_host'] }}
+    ports:
+      - "{{ 3305 + i }}:3306"
+    volumes:
+      - galera_node{{ i }}_data:/var/lib/mysql
+      - ./galera_config:/etc/mysql/conf.d
+      - /var/run/mysqld:/var/run/mysqld
+    environment:
+      MYSQL_ROOT_PASSWORD: {{ db_pass }}
+      MARIADB_AUTO_UPGRADE: "1"
+    command: >
+      --wsrep-cluster-name={{ galera_cluster_name }}
+      --wsrep-cluster-address={{ galera_cluster_address }}
+      --wsrep-node-name={{ vars['db' + i|string + '_host'] }}
+      --wsrep-node-address={{ vars['db' + i|string + '_host'] }}
+      --wsrep-sst-method=rsync
+      --wsrep-sst-auth={{ galera_sst_user }}:{{ galera_sst_password }}
+      --binlog-format=ROW
+      --default-storage-engine=InnoDB
+      --innodb-autoinc-lock-mode=2
+      --socket=/var/run/mysqld/mysqld.sock
+      --bind-address=0.0.0.0
+    networks:
+      - galera_network
+    restart: unless-stopped
+    depends_on:
+      - {{ db1_host }}
+
+{% endfor %}
+
+  {{ loadbalancer }}:
+    image: haproxy:2.6
+    container_name: {{ loadbalancer }}
+    ports:
+      - "3320:3306"
+      - "{{ haproxy_stats_port }}:8404"
+    volumes:
+      - ./haproxy_config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      - galera_network
+    restart: unless-stopped
+    depends_on:
+      - {{ db1_host }}
+      - {{ db2_host }}
+      - {{ db3_host }}
+      - {{ db4_host }}
+      - {{ db5_host }}
+
+  wordpress:
+    image: wordpress:{{ wp_version }}
+    container_name: wordpress-galera
+    ports:
+      - "{{ wordpress_port }}:80"
+    volumes:
+      - wp_data:/var/www/html
+    environment:
+      WORDPRESS_DB_HOST: {{ loadbalancer }}:3306
+      WORDPRESS_DB_USER: {{ wp_db_user }}
+      WORDPRESS_DB_PASSWORD: {{ wp_db_password }}
+      WORDPRESS_DB_NAME: {{ wordpress_db_name }}
+    networks:
+      - galera_network
+    restart: unless-stopped
+    depends_on:
+      - {{ loadbalancer }}
+
+  # Exporters для мониторинга
+  haproxy-exporter:
+    image: prom/haproxy-exporter:latest
+    container_name: haproxy-exporter
+    ports:
+      - "9101:9101"
+    command:
+      - '--haproxy.scrape-uri=http://{{ loadbalancer }}:8404/stats?stats;csv'
+    networks:
+      - galera_network
+      - monitoring_network
+    restart: unless-stopped
+    depends_on:
+      - {{ loadbalancer }}
+
+{% for i in range(1, 6) %}
+  mysql-exporter-{{ i }}:
+    image: prom/mysqld-exporter:latest
+    container_name: mysql-exporter-{{ i }}
+    ports:
+      - "{{ mysql_exporter_base_port | int + i - 1 }}:9104"
+    command:
+      - "--mysqld.username=exporter:exporter_password"
+      - "--mysqld.address={{ vars['db' + i|string + '_host'] }}:3306"
+    networks:
+      - galera_network
+      - monitoring_network
+    restart: unless-stopped
+    depends_on:
+      - {{ vars['db' + i|string + '_host'] }}
+
+{% endfor %}
+
+networks:
+  galera_network:
+    driver: bridge
+  monitoring_network:
+    external: true
+    name: monitoring
+
+volumes:
+{% for i in range(1, 6) %}
+  galera_node{{ i }}_data:
+{% endfor %}
+  wp_data:

@@ -1,0 +1,77 @@
+---
+- name: Проверка существования бэкапа данных
+  ansible.builtin.stat:
+    path: "{{ project_dir }}/wordpress_backup.sql"
+  register: backup_file_exists
+
+- name: Проверка существования контейнера mysql-master
+  community.docker.docker_container_info:
+    name: mysql-master
+  register: master_container_info
+  failed_when: false
+
+- name: Создание бэкапа базы данных WordPress
+  community.mysql.mysql_db:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ wordpress_db_name }}"
+    state: dump
+    target: "{{ project_dir }}/wordpress_backup.sql"
+    dump_extra_args: "--single-transaction --routines --triggers"
+  when:
+    - not backup_file_exists.stat.exists
+    - master_container_info.container is defined
+    - master_container_info.container.State.Status == "running"
+  failed_when: false
+
+- name: Проверка создания бэкапа
+  ansible.builtin.stat:
+    path: "{{ project_dir }}/wordpress_backup.sql"
+  register: backup_created
+
+- name: Создание альтернативного бэкапа через Docker volume
+  when:
+    - not backup_created.stat.exists or backup_created.stat.size == 0
+    - master_container_info.container is defined
+  block:
+    - name: Создание временного контейнера для копирования данных
+      community.docker.docker_container:
+        name: temp_backup_container
+        image: alpine:latest
+        volumes:
+          - "mysql_master_data:/source:ro"
+          - "{{ project_dir }}:/backup"
+        command: tar czf /backup/mysql_data_backup.tar.gz -C /source .
+        state: started
+        detach: false
+        cleanup: true
+      register: volume_backup_result
+
+    - name: Проверка успешности создания volume бэкапа
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/mysql_data_backup.tar.gz"
+      register: volume_backup_exists
+  rescue:
+    - name: Уведомление о неудаче создания бэкапа
+      ansible.builtin.debug:
+        msg: "Предупреждение: Не удалось создать бэкап данных из предыдущих работ"
+
+- name: Создание пустого бэкапа если данных нет
+  ansible.builtin.copy:
+    content: |
+      -- MySQL dump для WordPress
+      -- Пустой бэкап - нет данных для восстановления
+      USE {{ wordpress_db_name }};
+    dest: "{{ project_dir }}/wordpress_backup.sql"
+    mode: '0644'
+  when:
+    - not backup_file_exists.stat.exists
+    - not backup_created.stat.exists | default(false)
+    - not volume_backup_exists.stat.exists | default(false)
+
+- name: Обновление флага существования бэкапа
+  ansible.builtin.stat:
+    path: "{{ project_dir }}/wordpress_backup.sql"
+  register: backup_file_exists

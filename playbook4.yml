@@ -1,6 +1,9 @@
 ---
 - name: Home work 4
   hosts: carrier
+  become: true
+  roles:
+    - 4_task
   tasks:
     - name: Display Configuration Variables
       ansible.builtin.debug:

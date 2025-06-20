@@ -1,0 +1,33 @@
+global
+    daemon
+    maxconn 4096
+    log stdout local0
+
+defaults
+    mode tcp
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+    log global
+
+listen stats
+    bind *:8404
+    mode http
+    stats enable
+    stats uri /stats
+    stats refresh 30s
+    stats admin if TRUE
+    stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_password }}
+
+listen galera_cluster
+    bind *:3306
+    mode tcp
+    balance roundrobin
+    option tcp-check
+    tcp-check expect string is_writable:ON
+
+    server {{ db1_host }} {{ db1_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
+    server {{ db2_host }} {{ db2_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
+    server {{ db3_host }} {{ db3_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
+    server {{ db4_host }} {{ db4_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
+    server {{ db5_host }} {{ db5_host }}:3306 check port 3306 inter 5000 rise 2 fall 3

@@ -1,0 +1,153 @@
+---
+- name: Создание директории проекта
+  ansible.builtin.file:
+    path: "{{ project_dir }}"
+    mode: '0750'
+    state: directory
+
+- name: Создание директорий для конфигурации
+  ansible.builtin.file:
+    path: "{{ project_dir }}/{{ item }}"
+    mode: '0755'
+    state: directory
+  loop:
+    - galera_config
+    - haproxy_config
+    - scripts
+
+- name: Создание конфигурации Galera
+  ansible.builtin.template:
+    src: galera.cnf.j2
+    dest: "{{ project_dir }}/galera_config/galera.cnf"
+    mode: '0644'
+
+- name: Создание конфигурации HAProxy
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: "{{ project_dir }}/haproxy_config/haproxy.cfg"
+    mode: '0644'
+
+- name: Миграция данных из предыдущих работ
+  ansible.builtin.import_tasks: migrate_data.yml
+
+- name: Остановка предыдущих контейнеров
+  community.docker.docker_compose_v2:
+    project_src: "{{ item }}"
+    state: absent
+  loop:
+    - "/home/{{ ansible_user }}/wordpress-docker"
+    - "/home/{{ ansible_user }}/wordpress-cluster"
+    - "/home/{{ ansible_user }}/monitoring"
+  failed_when: false
+
+- name: Проверка существования сети мониторинга
+  community.docker.docker_network_info:
+    name: monitoring
+  register: monitoring_network_info
+  failed_when: false
+
+- name: Создание сети мониторинга если не существует
+  community.docker.docker_network:
+    name: monitoring
+    driver: bridge
+  when: not monitoring_network_info.exists
+
+- name: Запуск мониторинга если не запущен
+  community.docker.docker_compose_v2:
+    project_src: "/home/{{ ansible_user }}/monitoring"
+    state: present
+  register: monitoring_result
+  failed_when: false
+
+- name: Создание Docker Compose файла
+  ansible.builtin.template:
+    src: docker-compose-galera.yml.j2
+    dest: "{{ project_dir }}/docker-compose.yml"
+    mode: '0644'
+
+- name: Запуск первого узла Galera
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    services:
+      - "{{ db1_host }}"
+    state: present
+  register: galera_result
+
+- name: Ожидание запуска первого узла
+  ansible.builtin.wait_for:
+    port: 3306
+    host: "{{ ansible_default_ipv4.address }}"
+    delay: 30
+    timeout: 120
+
+- name: Запуск остальных узлов кластера
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
+  register: full_cluster_result
+
+- name: Проверка готовности первого узла MySQL
+  community.mysql.mysql_info:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+  register: mysql_info
+  retries: 10
+  delay: 10
+  until: mysql_info is not failed
+
+- name: Создание пользователей для SST и мониторинга
+  community.mysql.mysql_user:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    priv: "{{ item.priv }}"
+    host: '%'
+    state: present
+  loop:
+    - name: "{{ galera_sst_user }}"
+      password: "{{ galera_sst_password }}"
+      priv: "*.*:RELOAD,LOCK TABLES,PROCESS,REPLICATION CLIENT"
+    - name: "exporter"
+      password: "exporter_password"
+      priv: "*.*:PROCESS,REPLICATION CLIENT,SELECT"
+
+- name: Восстановление данных WordPress из бэкапа
+  community.mysql.mysql_db:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ wordpress_db_name }}"
+    state: import
+    target: "{{ project_dir }}/wordpress_backup.sql"
+  when: backup_file_exists.stat.exists
+  register: restore_result
+
+- name: Проверка статуса кластера
+  community.mysql.mysql_query:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    query: "SHOW STATUS LIKE 'wsrep_cluster_size'"
+  register: cluster_status
+
+- name: Вывод размера кластера
+  ansible.builtin.debug:
+    msg: "Размер Galera кластера: {{ cluster_status.query_result[0][0]['Value'] }}"
+  when: cluster_status.query_result | length > 0
+
+- name: Ожидание готовности кластера
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Запуск мониторинга
+  community.docker.docker_compose_v2:
+    project_src: "/home/{{ ansible_user }}/monitoring"
+    state: present
+  register: monitoring_result

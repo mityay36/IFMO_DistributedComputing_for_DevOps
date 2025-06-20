@@ -1,0 +1,41 @@
+[mysqld]
+# Основные настройки
+user=mysql
+datadir=/var/lib/mysql
+socket=/var/run/mysqld/mysqld.sock
+pid-file=/var/run/mysqld/mysqld.pid
+
+# Galera Provider Configuration
+wsrep_on=ON
+wsrep_provider=/usr/lib/galera/libgalera_smm.so
+
+# Galera Cluster Configuration
+wsrep_cluster_name="{{ galera_cluster_name }}"
+wsrep_cluster_address="{{ galera_cluster_address }}"
+
+# Galera Node Configuration
+wsrep_node_address="0.0.0.0"
+
+# Galera Synchronization Configuration
+wsrep_sst_method=rsync
+
+# InnoDB Configuration
+default_storage_engine=InnoDB
+innodb_autoinc_lock_mode=2
+innodb_flush_log_at_trx_commit=0
+innodb_buffer_pool_size=256M
+
+# Binary Logging
+binlog_format=ROW
+
+# Networking
+bind-address=0.0.0.0
+max_connections=500
+max_allowed_packet=1024M
+
+# Client socket configuration
+[client]
+socket=/var/run/mysqld/mysqld.sock
+
+[mysql]
+socket=/var/run/mysqld/mysqld.sock
