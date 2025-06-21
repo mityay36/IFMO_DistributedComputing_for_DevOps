@@ -1,4 +1,10 @@
 ---
+- name: Установка PyMySQL для работы с MySQL
+  ansible.builtin.package:
+    name: python3-pymysql
+    state: present
+  become: true
+
 - name: Создание директории проекта
   ansible.builtin.file:
     path: "{{ project_dir }}"
@@ -15,6 +21,12 @@
     - haproxy_config
     - scripts
 
+- name: Проверка существования Galera кластера
+  community.docker.docker_container_info:
+    name: galera-node1
+  register: galera_cluster_exists
+  failed_when: false
+
 - name: Создание конфигурации Galera
   ansible.builtin.template:
     src: galera.cnf.j2
@@ -27,37 +39,18 @@
     dest: "{{ project_dir }}/haproxy_config/haproxy.cfg"
     mode: '0644'
 
-- name: Миграция данных из предыдущих работ
-  ansible.builtin.import_tasks: migrate_data.yml
-
-- name: Остановка предыдущих контейнеров
+- name: Остановка предыдущих контейнеров (только при первом запуске)
   community.docker.docker_compose_v2:
     project_src: "{{ item }}"
     state: absent
   loop:
     - "/home/{{ ansible_user }}/wordpress-docker"
     - "/home/{{ ansible_user }}/wordpress-cluster"
-    - "/home/{{ ansible_user }}/monitoring"
   failed_when: false
+  when: not (galera_cluster_exists.exists | default(false))
 
-- name: Проверка существования сети мониторинга
-  community.docker.docker_network_info:
-    name: monitoring
-  register: monitoring_network_info
-  failed_when: false
-
-- name: Создание сети мониторинга если не существует
-  community.docker.docker_network:
-    name: monitoring
-    driver: bridge
-  when: not monitoring_network_info.exists
-
-- name: Запуск мониторинга если не запущен
-  community.docker.docker_compose_v2:
-    project_src: "/home/{{ ansible_user }}/monitoring"
-    state: present
-  register: monitoring_result
-  failed_when: false
+- name: Миграция данных из предыдущих работ
+  ansible.builtin.import_tasks: migrate_data.yml
 
 - name: Создание Docker Compose файла
   ansible.builtin.template:
@@ -65,30 +58,31 @@
     dest: "{{ project_dir }}/docker-compose.yml"
     mode: '0644'
 
-- name: Запуск первого узла Galera
+- name: Запуск Galera Cluster (только если не запущен)
   community.docker.docker_compose_v2:
     project_src: "{{ project_dir }}"
-    services:
-      - "{{ db1_host }}"
     state: present
   register: galera_result
+  when: not (galera_cluster_exists.exists | default(false))
 
-- name: Ожидание запуска первого узла
+- name: Проверка состояния существующего кластера
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
+  register: galera_status_check
+  when: galera_cluster_exists.exists | default(false)
+
+- name: Ожидание запуска первого узла (только при первом развертывании)
   ansible.builtin.wait_for:
     port: 3306
     host: "{{ ansible_default_ipv4.address }}"
     delay: 30
     timeout: 120
-
-- name: Запуск остальных узлов кластера
-  community.docker.docker_compose_v2:
-    project_src: "{{ project_dir }}"
-    state: present
-  register: full_cluster_result
+  when: not (galera_cluster_exists.exists | default(false))
 
 - name: Проверка готовности первого узла MySQL
   community.mysql.mysql_info:
-    login_host: localhost
+    login_host: "{{ ansible_default_ipv4.address }}"
     login_port: 3306
     login_user: root
     login_password: "{{ db_pass }}"
@@ -97,40 +91,75 @@
   delay: 10
   until: mysql_info is not failed
 
-- name: Создание пользователей для SST и мониторинга
-  community.mysql.mysql_user:
-    login_host: localhost
+- name: Проверка существования пользователей
+  community.mysql.mysql_query:
+    login_host: "{{ ansible_default_ipv4.address }}"
     login_port: 3306
     login_user: root
     login_password: "{{ db_pass }}"
-    name: "{{ item.name }}"
-    password: "{{ item.password }}"
-    priv: "{{ item.priv }}"
+    query: "SELECT User FROM mysql.user WHERE User IN ('{{ galera_sst_user }}', 'exporter')"
+  register: existing_users
+
+- name: Проверка существования пользователей
+  community.mysql.mysql_query:
+    login_host: "{{ ansible_default_ipv4.address }}"
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    query: "SELECT User FROM mysql.user WHERE User IN ('{{ galera_sst_user }}', 'exporter')"
+  register: existing_users
+
+- name: Отладка - вывод результата запроса пользователей
+  ansible.builtin.debug:
+    msg: "{{ existing_users.query_result }}"
+
+- name: Создание пользователя SST (если не существует)
+  community.mysql.mysql_user:
+    login_host: "{{ ansible_default_ipv4.address }}"
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ galera_sst_user }}"
+    password: "{{ galera_sst_password }}"
+    priv: "*.*:RELOAD,LOCK TABLES,PROCESS,REPLICATION CLIENT"
     host: '%'
     state: present
-  loop:
-    - name: "{{ galera_sst_user }}"
-      password: "{{ galera_sst_password }}"
-      priv: "*.*:RELOAD,LOCK TABLES,PROCESS,REPLICATION CLIENT"
-    - name: "exporter"
-      password: "exporter_password"
-      priv: "*.*:PROCESS,REPLICATION CLIENT,SELECT"
+    column_case_sensitive: false
+  when: "galera_sst_user not in (existing_users.query_result[0] | map(attribute='User') | list)"
 
-- name: Восстановление данных WordPress из бэкапа
+- name: Создание пользователя exporter (если не существует)
+  community.mysql.mysql_user:
+    login_host: "{{ ansible_default_ipv4.address }}"
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "exporter"
+    password: "exporter_password"
+    priv: "*.*:PROCESS,REPLICATION CLIENT,SELECT"
+    host: '%'
+    state: present
+    column_case_sensitive: false
+  when: "'exporter' not in (existing_users.query_result[0] | map(attribute='User') | list)"
+
+- name: Восстановление данных WordPress из бэкапа (только если есть данные)
   community.mysql.mysql_db:
-    login_host: localhost
+    login_host: "{{ ansible_default_ipv4.address }}"
     login_port: 3306
     login_user: root
     login_password: "{{ db_pass }}"
     name: "{{ wordpress_db_name }}"
     state: import
     target: "{{ project_dir }}/wordpress_backup.sql"
-  when: backup_file_exists.stat.exists
+  when:
+    - final_backup_check.stat.exists
+    - final_backup_check.stat.size > 100
+    - not (galera_cluster_exists.exists | default(false))
   register: restore_result
+  failed_when: false
 
 - name: Проверка статуса кластера
   community.mysql.mysql_query:
-    login_host: localhost
+    login_host: "{{ ansible_default_ipv4.address }}"
     login_port: 3306
     login_user: root
     login_password: "{{ db_pass }}"
@@ -139,15 +168,23 @@
 
 - name: Вывод размера кластера
   ansible.builtin.debug:
-    msg: "Размер Galera кластера: {{ cluster_status.query_result[0][0]['Value'] }}"
+    msg: "Размер Galera кластера: {{ cluster_status.query_result[0][0].Value }}"
   when: cluster_status.query_result | length > 0
 
 - name: Ожидание готовности кластера
   ansible.builtin.pause:
-    seconds: 30
+    seconds: 10
+  when: not (galera_cluster_exists.exists | default(false))
 
-- name: Запуск мониторинга
+- name: Проверка существования мониторинга
+  community.docker.docker_container_info:
+    name: prometheus
+  register: monitoring_exists
+  failed_when: false
+
+- name: Запуск мониторинга (только если не запущен)
   community.docker.docker_compose_v2:
     project_src: "/home/{{ ansible_user }}/monitoring"
     state: present
   register: monitoring_result
+  when: not (monitoring_exists.exists | default(false))

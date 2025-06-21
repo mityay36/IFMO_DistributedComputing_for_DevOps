@@ -10,7 +10,13 @@
   register: master_container_info
   failed_when: false
 
-- name: Создание бэкапа базы данных WordPress
+- name: Проверка существования Galera узлов (для повторных запусков)
+  community.docker.docker_container_info:
+    name: galera-node1
+  register: galera_node1_info
+  failed_when: false
+
+- name: Создание бэкапа базы данных WordPress (только если нет бэкапа и есть источник)
   community.mysql.mysql_db:
     login_host: localhost
     login_port: 3306
@@ -22,8 +28,25 @@
     dump_extra_args: "--single-transaction --routines --triggers"
   when:
     - not backup_file_exists.stat.exists
-    - master_container_info.container is defined
+    - master_container_info.exists | default(false)
     - master_container_info.container.State.Status == "running"
+  failed_when: false
+
+- name: Создание бэкапа из Galera кластера (если mysql-master не найден, но есть galera-node1)
+  community.mysql.mysql_db:
+    login_host: localhost
+    login_port: 3306
+    login_user: root
+    login_password: "{{ db_pass }}"
+    name: "{{ wordpress_db_name }}"
+    state: dump
+    target: "{{ project_dir }}/wordpress_backup.sql"
+    dump_extra_args: "--single-transaction --routines --triggers"
+  when:
+    - not backup_file_exists.stat.exists
+    - not (master_container_info.exists | default(false))
+    - galera_node1_info.exists | default(false)
+    - galera_node1_info.container.State.Status == "running"
   failed_when: false
 
 - name: Проверка создания бэкапа
@@ -32,10 +55,13 @@
   register: backup_created
 
 - name: Создание альтернативного бэкапа через Docker volume
-  when:
-    - not backup_created.stat.exists or backup_created.stat.size == 0
-    - master_container_info.container is defined
   block:
+    - name: Проверка существования volume mysql_master_data
+      community.docker.docker_volume_info:
+        name: mysql_master_data
+      register: volume_info
+      failed_when: false
+
     - name: Создание временного контейнера для копирования данных
       community.docker.docker_container:
         name: temp_backup_container
@@ -48,11 +74,16 @@
         detach: false
         cleanup: true
       register: volume_backup_result
+      when: volume_info.volume is defined
 
     - name: Проверка успешности создания volume бэкапа
       ansible.builtin.stat:
         path: "{{ project_dir }}/mysql_data_backup.tar.gz"
       register: volume_backup_exists
+
+  when:
+    - not backup_created.stat.exists or backup_created.stat.size == 0
+    - not (galera_node1_info.exists | default(false))
   rescue:
     - name: Уведомление о неудаче создания бэкапа
       ansible.builtin.debug:
@@ -74,4 +105,4 @@
 - name: Обновление флага существования бэкапа
   ansible.builtin.stat:
     path: "{{ project_dir }}/wordpress_backup.sql"
-  register: backup_file_exists
+  register: final_backup_check

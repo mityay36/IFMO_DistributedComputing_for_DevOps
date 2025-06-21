@@ -10,6 +10,7 @@ services:
       - /var/run/mysqld:/var/run/mysqld
     environment:
       MYSQL_ROOT_PASSWORD: {{ db_pass }}
+      MYSQL_ROOT_HOST: '%'
       MYSQL_DATABASE: {{ wordpress_db_name }}
       MYSQL_USER: {{ wp_db_user }}
       MYSQL_PASSWORD: {{ wp_db_password }}
@@ -43,6 +44,7 @@ services:
       - /var/run/mysqld:/var/run/mysqld
     environment:
       MYSQL_ROOT_PASSWORD: {{ db_pass }}
+      MYSQL_ROOT_HOST: '%'
       MARIADB_AUTO_UPGRADE: "1"
     command: >
       --wsrep-cluster-name={{ galera_cluster_name }}
