@@ -39,7 +39,10 @@
     dest: "{{ project_dir }}/haproxy_config/haproxy.cfg"
     mode: '0644'
 
-- name: Остановка предыдущих контейнеров (только при первом запуске)
+- name: Миграция данных из предыдущих работ
+  ansible.builtin.import_tasks: migrate_data.yml
+
+- name: Остановка предыдущих контейнеров
   community.docker.docker_compose_v2:
     project_src: "{{ item }}"
     state: absent
@@ -49,8 +52,36 @@
   failed_when: false
   when: not (galera_cluster_exists.exists | default(false))
 
-- name: Миграция данных из предыдущих работ
-  ansible.builtin.import_tasks: migrate_data.yml
+- name: Создание директории для инициализационных скриптов
+  ansible.builtin.file:
+    path: "{{ project_dir }}/mysql_init"
+    state: directory
+    mode: '0755'
+
+- name: Создание инициализационного SQL скрипта
+  ansible.builtin.copy:
+    content: |
+      -- Настройка прав доступа для root пользователя
+      CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '{{ db_pass }}';
+      GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+      
+      -- Создание пользователя SST для Galera
+      CREATE USER IF NOT EXISTS '{{ galera_sst_user }}'@'%' IDENTIFIED BY '{{ galera_sst_password }}';
+      GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '{{ galera_sst_user }}'@'%';
+      
+      -- Создание пользователя exporter
+      CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY 'exporter_password';
+      GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
+      
+      -- Создание базы данных WordPress
+      CREATE DATABASE IF NOT EXISTS {{ wordpress_db_name }};
+      CREATE USER IF NOT EXISTS '{{ wp_db_user }}'@'%' IDENTIFIED BY '{{ wp_db_password }}';
+      GRANT ALL PRIVILEGES ON {{ wordpress_db_name }}.* TO '{{ wp_db_user }}'@'%';
+      
+      FLUSH PRIVILEGES;
+    dest: "{{ project_dir }}/mysql_init/init.sql"
+    mode: '0644'
+
 
 - name: Создание Docker Compose файла
   ansible.builtin.template:
@@ -80,18 +111,7 @@
     timeout: 120
   when: not (galera_cluster_exists.exists | default(false))
 
-- name: Проверка готовности первого узла MySQL
-  community.mysql.mysql_info:
-    login_host: "{{ ansible_default_ipv4.address }}"
-    login_port: 3306
-    login_user: root
-    login_password: "{{ db_pass }}"
-  register: mysql_info
-  retries: 10
-  delay: 10
-  until: mysql_info is not failed
-
-- name: Проверка существования пользователей
+- name: Проверка готовности и существования пользователей
   community.mysql.mysql_query:
     login_host: "{{ ansible_default_ipv4.address }}"
     login_port: 3306
@@ -99,47 +119,9 @@
     login_password: "{{ db_pass }}"
     query: "SELECT User FROM mysql.user WHERE User IN ('{{ galera_sst_user }}', 'exporter')"
   register: existing_users
-
-- name: Проверка существования пользователей
-  community.mysql.mysql_query:
-    login_host: "{{ ansible_default_ipv4.address }}"
-    login_port: 3306
-    login_user: root
-    login_password: "{{ db_pass }}"
-    query: "SELECT User FROM mysql.user WHERE User IN ('{{ galera_sst_user }}', 'exporter')"
-  register: existing_users
-
-- name: Отладка - вывод результата запроса пользователей
-  ansible.builtin.debug:
-    msg: "{{ existing_users.query_result }}"
-
-- name: Создание пользователя SST (если не существует)
-  community.mysql.mysql_user:
-    login_host: "{{ ansible_default_ipv4.address }}"
-    login_port: 3306
-    login_user: root
-    login_password: "{{ db_pass }}"
-    name: "{{ galera_sst_user }}"
-    password: "{{ galera_sst_password }}"
-    priv: "*.*:RELOAD,LOCK TABLES,PROCESS,REPLICATION CLIENT"
-    host: '%'
-    state: present
-    column_case_sensitive: false
-  when: "galera_sst_user not in (existing_users.query_result[0] | map(attribute='User') | list)"
-
-- name: Создание пользователя exporter (если не существует)
-  community.mysql.mysql_user:
-    login_host: "{{ ansible_default_ipv4.address }}"
-    login_port: 3306
-    login_user: root
-    login_password: "{{ db_pass }}"
-    name: "exporter"
-    password: "exporter_password"
-    priv: "*.*:PROCESS,REPLICATION CLIENT,SELECT"
-    host: '%'
-    state: present
-    column_case_sensitive: false
-  when: "'exporter' not in (existing_users.query_result[0] | map(attribute='User') | list)"
+  retries: 8
+  delay: 15
+  until: existing_users is not failed
 
 - name: Восстановление данных WordPress из бэкапа (только если есть данные)
   community.mysql.mysql_db:

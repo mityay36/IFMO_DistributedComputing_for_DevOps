@@ -6,6 +6,7 @@ services:
       - "3306:3306"
     volumes:
       - galera_node1_data:/var/lib/mysql
+      - ./mysql_init:/docker-entrypoint-initdb.d
       - ./galera_config:/etc/mysql/conf.d
       - /var/run/mysqld:/var/run/mysqld
     environment:
@@ -15,6 +16,7 @@ services:
       MYSQL_USER: {{ wp_db_user }}
       MYSQL_PASSWORD: {{ wp_db_password }}
       MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_INITDB_SKIP_TZINFO: "1"
     command: >
       --wsrep-new-cluster
       --wsrep-cluster-name={{ galera_cluster_name }}
@@ -139,8 +141,8 @@ networks:
   galera_network:
     driver: bridge
   monitoring_network:
-    external: true
     name: monitoring
+    driver: bridge
 
 volumes:
 {% for i in range(1, 6) %}
