@@ -26,12 +26,6 @@ galera_nodes:
   - name: galera-node5
     port: 3310
 
-db1_host: galera-node1
-db2_host: galera-node2
-db3_host: galera-node3
-db4_host: galera-node4
-db5_host: galera-node5
-
 loadbalancer: haproxy-lb
 haproxy_stats_port: 8404
 haproxy_stats_user: admin
