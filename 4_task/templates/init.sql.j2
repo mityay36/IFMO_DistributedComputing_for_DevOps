@@ -1,0 +1,18 @@
+-- Настройка пользователей и прав доступа
+CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '{{ db_pass }}';
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+
+-- Пользователь для SST (State Snapshot Transfer)
+CREATE USER IF NOT EXISTS '{{ galera_sst_user }}'@'%' IDENTIFIED BY '{{ galera_sst_password }}';
+GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '{{ galera_sst_user }}'@'%';
+
+-- Пользователь для мониторинга
+CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY 'exporter_password';
+GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
+
+-- База данных и пользователь WordPress
+CREATE DATABASE IF NOT EXISTS {{ wordpress_db_name }};
+CREATE USER IF NOT EXISTS '{{ wp_db_user }}'@'%' IDENTIFIED BY '{{ wp_db_password }}';
+GRANT ALL PRIVILEGES ON {{ wordpress_db_name }}.* TO '{{ wp_db_user }}'@'%';
+
+FLUSH PRIVILEGES;

@@ -9,6 +9,7 @@ defaults
     timeout client 50000ms
     timeout server 50000ms
     log global
+    option tcplog
 
 listen stats
     bind *:8404
@@ -24,10 +25,10 @@ listen galera_cluster
     mode tcp
     balance roundrobin
     option tcp-check
-    tcp-check expect string is_writable:ON
+    tcp-check connect
+    tcp-check send-binary 0e000001 # MySQL protocol handshake length
+    tcp-check expect binary 0a # MySQL protocol version 10
 
-    server {{ db1_host }} {{ db1_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
-    server {{ db2_host }} {{ db2_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
-    server {{ db3_host }} {{ db3_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
-    server {{ db4_host }} {{ db4_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
-    server {{ db5_host }} {{ db5_host }}:3306 check port 3306 inter 5000 rise 2 fall 3
+{% for node in galera_nodes %}
+    server {{ node.name }} {{ node.name }}:3306 check port 3306 inter 5000 rise 2 fall 3
+{% endfor %}

@@ -1,0 +1,53 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: 'haproxy'
+    static_configs:
+      - targets: ['haproxy-exporter:9101']
+    scrape_interval: 30s
+
+{% for node in galera_nodes %}
+  - job_name: 'mysql-exporter-{{ loop.index }}'
+    static_configs:
+      - targets: ['mysql-exporter-{{ loop.index }}:9104']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    params:
+      collect[]:
+        - global_status
+        - global_variables
+        - slave_status
+        - info_schema.innodb_metrics
+        - info_schema.processlist
+        - info_schema.tables
+        - info_schema.tablestats
+        - info_schema.schemastats
+        - info_schema.replicahosts
+
+{% endfor %}
+
+  - job_name: 'galera-cluster'
+    static_configs:
+{% for node in galera_nodes %}
+      - targets: ['{{ node.name }}:{{ node.port }}']
+        labels:
+          galera_node: '{{ node.name }}'
+          node_id: '{{ loop.index }}'
+{% endfor %}
+    scrape_interval: 30s
+    metrics_path: /metrics
+    params:
+      collect[]:
+        - galera_status
+        - wsrep_status

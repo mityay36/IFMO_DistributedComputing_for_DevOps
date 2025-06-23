@@ -1,70 +1,54 @@
 services:
-  {{ db1_host }}:
+{% for node in galera_nodes %}
+  {{ node.name }}:
     image: mariadb:10.5
-    container_name: {{ db1_host }}
+    container_name: {{ node.name }}
     ports:
-      - "3306:3306"
+      - "{{ node.port }}:3306"
     volumes:
-      - galera_node1_data:/var/lib/mysql
-      - ./mysql_init:/docker-entrypoint-initdb.d
+      - {{ node.name }}_data:/var/lib/mysql
       - ./galera_config:/etc/mysql/conf.d
-      - /var/run/mysqld:/var/run/mysqld
+{% if loop.first %}
+      - ./mysql_init:/docker-entrypoint-initdb.d
+{% endif %}
     environment:
       MYSQL_ROOT_PASSWORD: {{ db_pass }}
       MYSQL_ROOT_HOST: '%'
+{% if loop.first %}
       MYSQL_DATABASE: {{ wordpress_db_name }}
       MYSQL_USER: {{ wp_db_user }}
       MYSQL_PASSWORD: {{ wp_db_password }}
+{% endif %}
       MARIADB_AUTO_UPGRADE: "1"
       MARIADB_INITDB_SKIP_TZINFO: "1"
     command: >
+{% if loop.first %}
       --wsrep-new-cluster
-      --wsrep-cluster-name={{ galera_cluster_name }}
       --wsrep-cluster-address=gcomm://
-      --wsrep-node-name={{ db1_host }}
-      --wsrep-node-address={{ db1_host }}
-      --wsrep-sst-method=rsync
-      --wsrep-sst-auth={{ galera_sst_user }}:{{ galera_sst_password }}
-      --binlog-format=ROW
-      --default-storage-engine=InnoDB
-      --innodb-autoinc-lock-mode=2
-      --socket=/var/run/mysqld/mysqld.sock
-      --bind-address=0.0.0.0
-    networks:
-      - galera_network
-    restart: unless-stopped
-
-{% for i in range(2, 6) %}
-  {{ vars['db' + i|string + '_host'] }}:
-    image: mariadb:10.6
-    container_name: {{ vars['db' + i|string + '_host'] }}
-    ports:
-      - "{{ 3305 + i }}:3306"
-    volumes:
-      - galera_node{{ i }}_data:/var/lib/mysql
-      - ./galera_config:/etc/mysql/conf.d
-      - /var/run/mysqld:/var/run/mysqld
-    environment:
-      MYSQL_ROOT_PASSWORD: {{ db_pass }}
-      MYSQL_ROOT_HOST: '%'
-      MARIADB_AUTO_UPGRADE: "1"
-    command: >
-      --wsrep-cluster-name={{ galera_cluster_name }}
+{% else %}
       --wsrep-cluster-address={{ galera_cluster_address }}
-      --wsrep-node-name={{ vars['db' + i|string + '_host'] }}
-      --wsrep-node-address={{ vars['db' + i|string + '_host'] }}
+{% endif %}
+      --wsrep-cluster-name={{ galera_cluster_name }}
+      --wsrep-node-name={{ node.name }}
+      --wsrep-node-address={{ node.name }}
       --wsrep-sst-method=rsync
       --wsrep-sst-auth={{ galera_sst_user }}:{{ galera_sst_password }}
       --binlog-format=ROW
       --default-storage-engine=InnoDB
       --innodb-autoinc-lock-mode=2
-      --socket=/var/run/mysqld/mysqld.sock
       --bind-address=0.0.0.0
     networks:
       - galera_network
     restart: unless-stopped
+{% if not loop.first %}
     depends_on:
-      - {{ db1_host }}
+      - galera-node1
+{% endif %}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p{{ db_pass }}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
 {% endfor %}
 
@@ -72,19 +56,22 @@ services:
     image: haproxy:2.6
     container_name: {{ loadbalancer }}
     ports:
-      - "3320:3306"
+      - "{{ haproxy_external_port }}:3306"
       - "{{ haproxy_stats_port }}:8404"
     volumes:
-      - ./haproxy_config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      - ./haproxy_config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
       - galera_network
     restart: unless-stopped
     depends_on:
-      - {{ db1_host }}
-      - {{ db2_host }}
-      - {{ db3_host }}
-      - {{ db4_host }}
-      - {{ db5_host }}
+{% for node in galera_nodes %}
+      - {{ node.name }}
+{% endfor %}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8404/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   wordpress:
     image: wordpress:{{ wp_version }}
@@ -104,7 +91,7 @@ services:
     depends_on:
       - {{ loadbalancer }}
 
-  # Exporters для мониторинга
+  # Мониторинг экспортеры
   haproxy-exporter:
     image: prom/haproxy-exporter:latest
     container_name: haproxy-exporter
@@ -119,21 +106,23 @@ services:
     depends_on:
       - {{ loadbalancer }}
 
-{% for i in range(1, 6) %}
-  mysql-exporter-{{ i }}:
+{% for node in galera_nodes %}
+  mysql-exporter-{{ loop.index }}:
     image: prom/mysqld-exporter:latest
-    container_name: mysql-exporter-{{ i }}
+    container_name: mysql-exporter-{{ loop.index }}
     ports:
-      - "{{ mysql_exporter_base_port | int + i - 1 }}:9104"
+      - "{{ mysql_exporter_base_port + loop.index - 1 }}:9104"
     command:
       - "--mysqld.username=exporter:exporter_password"
-      - "--mysqld.address={{ vars['db' + i|string + '_host'] }}:3306"
+      - "--mysqld.address={{ node.name }}:3306"
+    environment:
+      DATA_SOURCE_NAME: "exporter:exporter_password@({{ node.name }}:3306)/"
     networks:
       - galera_network
       - monitoring_network
     restart: unless-stopped
     depends_on:
-      - {{ vars['db' + i|string + '_host'] }}
+      - {{ node.name }}
 
 {% endfor %}
 
@@ -141,11 +130,11 @@ networks:
   galera_network:
     driver: bridge
   monitoring_network:
-    name: monitoring
-    driver: bridge
+    name: monitoring_monitoring
+    external: true
 
 volumes:
-{% for i in range(1, 6) %}
-  galera_node{{ i }}_data:
+{% for node in galera_nodes %}
+  {{ node.name }}_data:
 {% endfor %}
   wp_data:
