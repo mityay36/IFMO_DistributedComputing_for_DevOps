@@ -24,10 +24,7 @@ listen galera_cluster
     bind *:3306
     mode tcp
     balance roundrobin
-    option tcp-check
-    tcp-check connect
-    tcp-check send-binary 0e000001 # MySQL protocol handshake length
-    tcp-check expect binary 0a # MySQL protocol version 10
+    option mysql-check user haproxy_check
 
 {% for node in galera_nodes %}
     server {{ node.name }} {{ node.name }}:3306 check port 3306 inter 5000 rise 2 fall 3

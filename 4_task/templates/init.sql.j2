@@ -8,11 +8,15 @@ GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '{{ galera_sst_
 
 -- Пользователь для мониторинга
 CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY 'exporter_password';
-GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
+GRANT SUPER, SLAVE MONITOR, PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
 
 -- База данных и пользователь WordPress
 CREATE DATABASE IF NOT EXISTS {{ wordpress_db_name }};
 CREATE USER IF NOT EXISTS '{{ wp_db_user }}'@'%' IDENTIFIED BY '{{ wp_db_password }}';
 GRANT ALL PRIVILEGES ON {{ wordpress_db_name }}.* TO '{{ wp_db_user }}'@'%';
+
+-- Пользователь для HAProxy health checks (без пароля)
+CREATE USER IF NOT EXISTS 'haproxy_check'@'%';
+GRANT USAGE ON *.* TO 'haproxy_check'@'%';
 
 FLUSH PRIVILEGES;
